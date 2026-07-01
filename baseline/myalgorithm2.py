@@ -40,6 +40,34 @@ K_BEST: int = 6
 # B(x,y) 블로킹 항의 가중치 (w1 대비 매우 작게 유지)
 W5: float = 1e-3
 
+# Diverse spatial sampling: True -> collect up to DIVERSE_CAP feasible
+# candidates first, then bucket by ceil(sqrt(K_BEST)) x ceil(sqrt(K_BEST))
+# grid and pick K_BEST spatially diverse representatives.
+# False -> first-K BLF order (original behaviour).
+DIVERSE_SAMPLE: bool = False
+
+# Collection cap for diverse mode: how many feasible candidates to collect
+# from the BLF-ordered list before spatial bucketing.  Decoupled from K_BEST
+# so they can be varied independently.  Has no effect when DIVERSE_SAMPLE=False.
+DIVERSE_CAP: int = 24
+
+# Grid size for diverse bucketing: 0 = auto (ceil(sqrt(K_BEST))), positive
+# integer overrides to exactly that value.  cfg-I sets this to 4 (4x4 grid).
+DIVERSE_GRID: int = 0
+
+# Diagnostic logging for diverse bucketing (cfg-J only).  When True,
+# _select_k_candidates_diverse writes a compact tuple to _log_pending (a
+# 1-element buffer), and _place_blocks appends exactly one tuple per block
+# to _diverse_stats after the winning (bay, orient) is determined.
+# Tuple format: (g, n_occupied_cells, n_feasible, n_from_cells, n_from_leftover, bitmask)
+# where bitmask bit (r*g+c) is set if cell (r,c) had >= 1 candidate.
+DIVERSE_LOG: bool = False
+_diverse_stats: list = []   # populated only when DIVERSE_LOG=True
+_log_pending:   list = []   # 1-element buffer; overwritten each call, never grows
+
+# Exit-blocking weight for _placement_score (cfg-K).  0 disables it entirely.
+W6: float = 0.0
+
 
 # ==========================================================================
 # Helper: 블록 bounding box (앵커 기준, 방향별)
@@ -200,16 +228,18 @@ def _placement_score(tardiness: float, workload: float,
                      bay_weights: list[float],
                      w1: float, w2: float, w3: float,
                      top_y: float = 0.0, w4: float = 1e-4,
-                     blocking: float = 0.0) -> float:
+                     blocking: float = 0.0,
+                     exit_blocking: float = 0.0, w6: float = 0.0) -> float:
     """
     블록을 bay_id에 배치할 때의 복합 점수 (낮을수록 좋음).
 
-      w1 * tardiness    — 지연 시간: max(0, exit_time - due_date)
-      w2 * new_obj2     — 정규화된 부하 균형 페널티 근사값
-      w3 * pref_penalty — 선호도 페널티: S_i_max - S_i_bay_id
-      w4 * top_y        — 타이브레이킹: 상단 에지 높이 (낮을수록 타이트한 패킹)
-      W5 * blocking     — B(x,y) 블로킹 휴리스틱:
-                          새 블록 앞에 있는(x 방향 입구 쪽) y-range 겹침 블록 수
+      w1 * tardiness      — 지연 시간: max(0, exit_time - due_date)
+      w2 * new_obj2       — 정규화된 부하 균형 페널티 근사값
+      w3 * pref_penalty   — 선호도 페널티: S_i_max - S_i_bay_id
+      w4 * top_y          — 타이브레이킹: 상단 에지 높이 (낮을수록 타이트한 패킹)
+      W5 * blocking       — B(x,y) 진입 블로킹: x 방향 앞쪽 y-range 겹침 블록 수
+      w6 * exit_blocking  — 퇴출 블로킹 추정: 새 블록 상단 위쪽 x-range 겹침 블록 수
+                            (cfg-K; W6=0 이면 비활성화)
     """
     new_load = bay_loads[bay_id] + workload
     new_obj2 = max(
@@ -218,7 +248,7 @@ def _placement_score(tardiness: float, workload: float,
         default=0.0
     )
     return (w1 * tardiness + w2 * new_obj2 + w3 * pref_penalty
-            + w4 * top_y + W5 * blocking)
+            + w4 * top_y + W5 * blocking + w6 * exit_blocking)
 
 
 # ==========================================================================
@@ -339,6 +369,69 @@ def _force_place(bi: int,
 
 
 # ==========================================================================
+# Diverse spatial sampling helper (used when DIVERSE_SAMPLE=True)
+# ==========================================================================
+
+def _select_k_candidates_diverse(
+    feasible_list: list[tuple[float, float, int, int]],
+    bay_w: float,
+    bay_h: float,
+    k: int,
+) -> list[tuple[float, float, int, int]]:
+    """
+    Return up to k spatially-diverse candidates from feasible_list.
+
+    Divides the bay into ceil(sqrt(k)) x ceil(sqrt(k)) grid cells.
+    Takes the candidate with the smallest exit_t from each non-empty cell,
+    then fills remaining slots from leftover candidates in exit_t order.
+    """
+    if len(feasible_list) <= k:
+        return feasible_list
+
+    # DIVERSE_GRID=0 means auto (ceil(sqrt(k))); positive overrides grid size.
+    g = DIVERSE_GRID if DIVERSE_GRID > 0 else math.ceil(math.sqrt(k))
+
+    def _cell(cx: float, cy: float) -> tuple[int, int]:
+        col = min(int(cx / bay_w * g), g - 1)
+        row = min(int(cy / bay_h * g), g - 1)
+        return (row, col)
+
+    # Map index to cell
+    cell_map: dict[tuple[int, int], list[int]] = {}
+    for idx, cand in enumerate(feasible_list):
+        c = _cell(cand[0], cand[1])
+        cell_map.setdefault(c, []).append(idx)
+
+    # Pick best (min exit_t) index from each cell
+    picked_indices: set[int] = set()
+    pick_order: list[int] = []
+    for indices in cell_map.values():
+        best_idx = min(indices, key=lambda i: feasible_list[i][3])
+        pick_order.append(best_idx)
+        picked_indices.add(best_idx)
+
+    pick_order.sort(key=lambda i: feasible_list[i][3])
+    selected_indices = pick_order[:k]
+    n_from_cells = len(selected_indices)
+
+    if len(selected_indices) < k:
+        leftovers = sorted(
+            (i for i in range(len(feasible_list)) if i not in picked_indices),
+            key=lambda i: feasible_list[i][3],
+        )
+        selected_indices.extend(leftovers[: k - len(selected_indices)])
+
+    if DIVERSE_LOG:
+        bitmask = 0
+        for r, c in cell_map:
+            bitmask |= 1 << (r * g + c)
+        _log_pending[:] = [(g, len(cell_map), len(feasible_list),
+                            n_from_cells, len(selected_indices) - n_from_cells, bitmask)]
+
+    return [feasible_list[i] for i in selected_indices]
+
+
+# ==========================================================================
 # 공유 탐욕 배치 커널 (Phase 1 및 _repair 에서 사용)
 # ==========================================================================
 
@@ -354,6 +447,7 @@ def _place_blocks(
     prev_assignments: dict[int, dict] | None = None,
     t_start: float | None = None,
     log_interval: int = 0,
+    diverse_cap: int | None = None,
 ) -> dict[int, dict]:
     """
     Phase 1 및 repair(greedy 모드) 공용 배치 커널.
@@ -384,6 +478,7 @@ def _place_blocks(
 
         best_score     = float("inf")
         best_placement = None
+        best_log_entry = None   # logging: winning diverse-call entry (per block)
         used_forced    = bi in forced_ids
 
         if not used_forced:
@@ -434,6 +529,7 @@ def _place_blocks(
                 schedule_in_bay = bay_schedule[bay_id]
 
                 for oi in range(n_orient):
+                    _log_snap = None   # logging: entry from this (bay,oi) diverse call
                     blk_bb = _block_bbox(blk_data, oi)
                     lx0_oi, ly0_oi, lx1_oi, ly1_oi = blk_bb
                     if (math.ceil(-lx0_oi) > math.floor(bay.width  - lx1_oi) or
@@ -448,10 +544,15 @@ def _place_blocks(
                         bay.width, bay.height, active_in_bay, blk_bb
                     )
 
-                    # ── K-best 수집: 첫 K_BEST 개 실현 가능 후보 ─────────────
+                    # ── K-best 수집 ─────────────────────────────────────────
+                    # DIVERSE_SAMPLE=False: stop at K_BEST (first-K BLF order).
+                    # DIVERSE_SAMPLE=True: collect up to DIVERSE_CAP feasibles
+                    #   (independent of K_BEST) before spatial bucketing.
+                    _eff_cap     = diverse_cap if diverse_cap is not None else DIVERSE_CAP
+                    _collect_cap = _eff_cap if DIVERSE_SAMPLE else K_BEST
                     feasible_k: list[tuple[int, int, int, int]] = []
                     for (cx, cy) in candidates:
-                        if len(feasible_k) >= K_BEST:
+                        if len(feasible_k) >= _collect_cap:
                             break
                         new_blk = Block(block_id=bi, block_data=blk_data,
                                         x=cx, y=cy, orient_idx=oi)
@@ -464,6 +565,14 @@ def _place_blocks(
                         if entry is None:
                             continue
                         feasible_k.append((cx, cy, entry, exit_t))
+
+                    # ── Diverse spatial sampling (DIVERSE_SAMPLE=True) ───────
+                    if DIVERSE_SAMPLE and len(feasible_k) > K_BEST:
+                        feasible_k = _select_k_candidates_diverse(
+                            feasible_k, bay.width, bay.height, K_BEST
+                        )
+                        if DIVERSE_LOG and _log_pending:
+                            _log_snap = _log_pending[0]
 
                     # ── 수집된 K개 후보 점수 평가 ────────────────────────────
                     for (cx, cy, entry, exit_t) in feasible_k:
@@ -478,15 +587,36 @@ def _place_blocks(
                                 new_y_min < b.bounding_rect()[3]
                             )
                         )
+                        # Exit-blocking estimate (cfg-K, W6>0): blocks with
+                        # x-range overlap that extend above new block's top —
+                        # these would obstruct crane ascent during exit.
+                        if W6 > 0:
+                            new_x_min = cx + lx0_oi
+                            new_x_max = cx + lx1_oi
+                            new_y_top = cy + ly1_oi
+                            exit_blocking = float(sum(
+                                1 for b in active_in_bay
+                                if (b.bounding_rect()[0] < new_x_max
+                                    and new_x_min < b.bounding_rect()[2]
+                                    and b.bounding_rect()[3] > new_y_top)
+                            ))
+                        else:
+                            exit_blocking = 0.0
                         score = _placement_score(
                             tardiness, workload, bay_loads, bay_id,
                             s_max - prefs[bay_id], bay_weights, w1, w2, w3,
                             top_y=cy + ly1_oi,
-                            blocking=blocking
+                            blocking=blocking,
+                            exit_blocking=exit_blocking, w6=W6,
                         )
                         if score < best_score:
                             best_score     = score
                             best_placement = (bay_id, cx, cy, oi, entry, exit_t)
+                            if _log_snap is not None:
+                                best_log_entry = _log_snap
+
+        if DIVERSE_LOG and best_log_entry is not None:
+            _diverse_stats.append(best_log_entry)
 
         if best_placement is None:
             best_placement = _force_place(bi, blocks_data, bays, bay_schedule, prefs)
@@ -541,12 +671,13 @@ def _repair(prob_info: dict,
             t_start: float,
             timelimit: float,
             max_passes: int = 10,
-            repair_mode: str = "greedy") -> dict[int, dict]:
+            repair_mode: str = "greedy",
+            diverse_cap: int | None = None) -> dict[int, dict]:
     """
     위반 블록을 반복 감지하여 수리. (baseline과 동일 — 변경 없음)
 
     greedy 모드: 위반 블록을 제거하고 전체 Phase-1 탐색으로 재배치.
-                 반복 위반자 → forced_ids (빈 베이 창), 90% time-guard.
+                 반복 위반자 → forced_ids (빈 베이 창). 시간 가드 없음.
     simple  모드: 현재 위치 유지, 시간 창만 빈 베이로 이동.
     """
     from utils import check_feasibility
@@ -555,9 +686,6 @@ def _repair(prob_info: dict,
     forced_ids:      set[int]       = set()
 
     for pass_idx in range(max_passes):
-        if time.time() - t_start > timelimit * 0.98:
-            break
-
         result = check_feasibility(prob_info, sol)
         if result["feasible"]:
             break
@@ -647,14 +775,13 @@ def _repair(prob_info: dict,
                 bay_loads[bay_id] += blocks_data[bid_a]["workload"]
 
             for ri, bi in enumerate(to_repair):
-                if time.time() - t_start > timelimit * 0.90:
-                    forced_ids.add(bi)
                 prev_a  = assignments.get(bi)
                 partial = _place_blocks(
                     [bi], blocks_data, bays,
                     bay_placed, bay_schedule2, bay_loads,
                     w1, w2, w3, forced_ids,
                     prev_assignments=assignments,
+                    diverse_cap=diverse_cap,
                 )
                 assignments.update(partial)
                 new_a       = partial[bi]
@@ -753,7 +880,14 @@ def algorithm(prob_info: dict, timelimit: float = 60,
     print(f"[alg2] Instance : {prob_info.get('name', '?')}")
     print(f"[alg2] Bays     : {n_bays}  |  Blocks : {n_blocks}  |  Timelimit : {timelimit:.1f}s")
     print(f"[alg2] Weights  : w1={w1}  w2={w2}  w3={w3}")
-    print(f"[alg2] Mode     : candidate={CANDIDATE_MODE}  K={K_BEST}  W5={W5}")
+    # Size-based cap fallback: large instances get a smaller collection cap so
+    # Phase 1 stays within the timelimit.  Threshold is n_blocks > 160 (covers
+    # instances like prob_10 with 200 blocks).  Instances with <= 160 blocks
+    # are unaffected (effective_cap == DIVERSE_CAP == 24).
+    effective_cap = DIVERSE_CAP if n_blocks <= 160 else 8
+    print(f"[alg2] Mode     : candidate={CANDIDATE_MODE}  K={K_BEST}  W5={W5}  cap={effective_cap}")
+    if effective_cap != DIVERSE_CAP:
+        print(f"[alg2] NOTE     : n_blocks={n_blocks} > 160 — DIVERSE_CAP reduced {DIVERSE_CAP} -> {effective_cap}")
     print(f"[alg2] {'-' * 56}")
 
     bays = [Bay.from_dict(d, i) for i, d in enumerate(bays_data)]
@@ -800,6 +934,7 @@ def algorithm(prob_info: dict, timelimit: float = 60,
         bay_placed, bay_schedule, bay_loads,
         w1, w2, w3, forced_ids=set(),
         t_start=t_start, log_interval=max(1, n_blocks // 10),
+        diverse_cap=effective_cap,
     )
 
     elapsed_p1 = time.time() - t_start
@@ -813,7 +948,8 @@ def algorithm(prob_info: dict, timelimit: float = 60,
     sol = {"operations": _build_operations(list(assignments.values()))}
     assignments = _repair(prob_info, sol, assignments, bays, blocks_data,
                           w1, w2, w3, t_start, timelimit,
-                          repair_mode=repair_mode)
+                          repair_mode=repair_mode,
+                          diverse_cap=effective_cap)
 
     elapsed_total = time.time() - t_start
     final_sol = {"operations": _build_operations(list(assignments.values()))}
