@@ -1,0 +1,79 @@
+[
+  {
+    "prob": 2,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 33410.0,
+    "obj1": 0.0,
+    "obj2": 1181,
+    "obj3": 144.0,
+    "elapsed": 53.953784465789795
+  },
+  {
+    "prob": 3,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 91700.0,
+    "obj1": 0.0,
+    "obj2": 1700,
+    "obj3": 498.0,
+    "elapsed": 47.36585712432861
+  },
+  {
+    "prob": 36,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 468506.0,
+    "obj1": 487.0,
+    "obj2": 1795,
+    "obj3": 10914.0,
+    "elapsed": 45.77858519554138
+  },
+  {
+    "prob": 23,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 11308892.0,
+    "obj1": 807.0,
+    "obj2": 1197,
+    "obj3": 1792.0,
+    "elapsed": 53.75319266319275
+  },
+  {
+    "prob": 39,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 35749277.0,
+    "obj1": 2597.0,
+    "obj2": 444,
+    "obj3": 7478.0,
+    "elapsed": 51.588308811187744
+  },
+  {
+    "prob": 27,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 57264937.0,
+    "obj1": 4123.0,
+    "obj2": 489,
+    "obj3": 5730.0,
+    "elapsed": 56.11047697067261
+  },
+  {
+    "prob": 38,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 80880995.0,
+    "obj1": 5899.0,
+    "obj2": 3914,
+    "obj3": 7406.0,
+    "elapsed": 56.77568531036377
+  }
+]

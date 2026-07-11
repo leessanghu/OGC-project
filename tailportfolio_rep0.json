@@ -1,0 +1,134 @@
+[
+  {
+    "prob": 23,
+    "module": "myalgorithm8",
+    "feasible": true,
+    "stage": 5,
+    "objective": 10320690.0,
+    "obj1": 730.0,
+    "obj2": 2660,
+    "obj3": 2020.0,
+    "elapsed": 53.11047434806824
+  },
+  {
+    "prob": 23,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 10168689.0,
+    "obj1": 727.0,
+    "obj2": 2528,
+    "obj3": 1468.0,
+    "elapsed": 54.58412480354309
+  },
+  {
+    "prob": 28,
+    "module": "myalgorithm8",
+    "feasible": true,
+    "stage": 5,
+    "objective": 11049132.0,
+    "obj1": 747.0,
+    "obj2": 1527,
+    "obj3": 3616.0,
+    "elapsed": 50.75848913192749
+  },
+  {
+    "prob": 28,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 11924761.0,
+    "obj1": 820.0,
+    "obj2": 1567,
+    "obj3": 3290.0,
+    "elapsed": 54.92632794380188
+  },
+  {
+    "prob": 30,
+    "module": "myalgorithm8",
+    "feasible": true,
+    "stage": 5,
+    "objective": 17265117.0,
+    "obj1": 1249.0,
+    "obj2": 450,
+    "obj3": 3052.0,
+    "elapsed": 54.17184638977051
+  },
+  {
+    "prob": 30,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 17265117.0,
+    "obj1": 1249.0,
+    "obj2": 450,
+    "obj3": 3052.0,
+    "elapsed": 53.048853158950806
+  },
+  {
+    "prob": 31,
+    "module": "myalgorithm8",
+    "feasible": true,
+    "stage": 5,
+    "objective": 19048707.0,
+    "obj1": 1221.0,
+    "obj2": 3490,
+    "obj3": 10332.0,
+    "elapsed": 54.21651268005371
+  },
+  {
+    "prob": 31,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 19088706.0,
+    "obj1": 1224.0,
+    "obj2": 3490,
+    "obj3": 10332.0,
+    "elapsed": 56.66180753707886
+  },
+  {
+    "prob": 33,
+    "module": "myalgorithm8",
+    "feasible": true,
+    "stage": 5,
+    "objective": 21481393.0,
+    "obj1": 3099.0,
+    "obj2": 1531,
+    "obj3": 5367.0,
+    "elapsed": 50.6844744682312
+  },
+  {
+    "prob": 33,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 22257812.0,
+    "obj1": 3206.0,
+    "obj2": 1026,
+    "obj3": 5821.0,
+    "elapsed": 55.54611301422119
+  },
+  {
+    "prob": 37,
+    "module": "myalgorithm8",
+    "feasible": true,
+    "stage": 5,
+    "objective": 9904363.0,
+    "obj1": 2247.0,
+    "obj2": 3178,
+    "obj3": 4004.0,
+    "elapsed": 50.39867401123047
+  },
+  {
+    "prob": 37,
+    "module": "myalgorithm9",
+    "feasible": true,
+    "stage": 5,
+    "objective": 9853904.0,
+    "obj1": 2216.0,
+    "obj2": 2744,
+    "obj3": 4095.0,
+    "elapsed": 52.20059037208557
+  }
+]
